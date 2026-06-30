@@ -1,9 +1,2 @@
-# Purpose:
-# Declare project dependencies.
-#
-# Responsibilities:
-# - List third-party libraries required by the CLI application.
-#
-# Future:
-# - Add pinned versions once implementation begins.
+# Phase 1 uses only Python standard library modules.
 
