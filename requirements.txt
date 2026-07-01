@@ -1,2 +1,7 @@
-# Phase 1 uses only Python standard library modules.
+python-dotenv>=1.0.0
+requests>=2.31.0
+openai>=1.40.0
+google-genai>=1.0.0
+
+
 

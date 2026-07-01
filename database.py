@@ -29,14 +29,25 @@ CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     action_type TEXT NOT NULL DEFAULT 'general',
     query TEXT NOT NULL,
-    created_on TEXT NOT NULL
+    created_on TEXT NOT NULL,
+
+    -- Phase 2 AI fields (kept minimal for beginner readability)
+    ai_response TEXT,
+    ai_provider TEXT,
+    model TEXT
 )
 """
 
-INSERT_SQL = f"INSERT INTO {TABLE_NAME} (action_type, query, created_on) VALUES (?, ?, ?)"
-GET_ALL_SQL = (
-    f"SELECT id, action_type, query, created_on FROM {TABLE_NAME} ORDER BY id DESC"
+
+INSERT_SQL = (
+    f"INSERT INTO {TABLE_NAME} (action_type, query, created_on) VALUES (?, ?, ?)"
 )
+GET_ALL_SQL = (
+    f"SELECT id, action_type, query, created_on, ai_response, ai_provider, model "
+    f"FROM {TABLE_NAME} ORDER BY id DESC"
+)
+
+
 DELETE_BY_ID_SQL = f"DELETE FROM {TABLE_NAME} WHERE id = ?"
 DELETE_ALL_SQL = f"DELETE FROM {TABLE_NAME}"
 COUNT_BY_ID_SQL = f"SELECT COUNT(*) FROM {TABLE_NAME} WHERE id = ?"
@@ -61,9 +72,7 @@ def _format_timestamp(dt: datetime | None = None) -> str:
 
 def _ensure_action_type_column(connection: sqlite3.Connection) -> None:
     """Add action_type column to older databases if missing."""
-    columns = {
-        row[1] for row in connection.execute(f"PRAGMA table_info({TABLE_NAME})")
-    }
+    columns = {row[1] for row in connection.execute(f"PRAGMA table_info({TABLE_NAME})")}
     if "action_type" not in columns:
         connection.execute(
             f"ALTER TABLE {TABLE_NAME} "
@@ -71,11 +80,24 @@ def _ensure_action_type_column(connection: sqlite3.Connection) -> None:
         )
 
 
+def _ensure_ai_columns(connection: sqlite3.Connection) -> None:
+    """Ensure Phase 2 AI response columns exist for older DB files."""
+    columns = {row[1] for row in connection.execute(f"PRAGMA table_info({TABLE_NAME})")}
+
+    if "ai_response" not in columns:
+        connection.execute(f"ALTER TABLE {TABLE_NAME} ADD COLUMN ai_response TEXT")
+    if "ai_provider" not in columns:
+        connection.execute(f"ALTER TABLE {TABLE_NAME} ADD COLUMN ai_provider TEXT")
+    if "model" not in columns:
+        connection.execute(f"ALTER TABLE {TABLE_NAME} ADD COLUMN model TEXT")
+
+
 def initialize_database() -> None:
     """Create database tables if they do not exist."""
     connection = _get_connection()
     connection.execute(SCHEMA_SQL)
     _ensure_action_type_column(connection)
+    _ensure_ai_columns(connection)
     connection.commit()
 
 
@@ -91,9 +113,25 @@ def save_query(query: str, action_type: str = "general") -> int:
 
 
 def get_all_queries() -> list[tuple[Any, ...]]:
-    """Return all saved queries, newest first."""
+    """Return all saved queries/records, newest first."""
     connection = _get_connection()
     return connection.execute(GET_ALL_SQL).fetchall()
+
+
+def save_ai_response(
+    record_id: int,
+    ai_response: str,
+    ai_provider: str | None,
+    model: str | None,
+) -> None:
+    """Store AI response for an existing record."""
+
+    connection = _get_connection()
+    connection.execute(
+        f"UPDATE {TABLE_NAME} SET ai_response = ?, ai_provider = ?, model = ? WHERE id = ?",
+        (ai_response, ai_provider, model, record_id),
+    )
+    connection.commit()
 
 
 def delete_query(record_id: int) -> bool:
@@ -127,6 +165,7 @@ def get_action_label(action_type: str) -> str:
 def export_session() -> Path:
     """Export all saved queries to a JSON file and return the file path."""
     rows = get_all_queries()
+
     EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -142,8 +181,11 @@ def export_session() -> Path:
                 "action_label": get_action_label(action_type),
                 "query": query,
                 "created_on": created_on,
+                "ai_response": ai_response,
+                "ai_provider": ai_provider,
+                "model": model,
             }
-            for record_id, action_type, query, created_on in rows
+            for record_id, action_type, query, created_on, ai_response, ai_provider, model in rows
         ],
     }
 

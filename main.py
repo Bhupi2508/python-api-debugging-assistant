@@ -1,9 +1,23 @@
 """Application entry point for the AI Developer Assistant CLI."""
 
+from __future__ import annotations
+
 import sqlite3
 
 import database
 from database import MAX_QUERY_LENGTH
+from config import load_ai_config
+from services.ai_manager import complete
+from services.feature_services import explain_error_service, sql_assistant_service
+
+import logger
+
+
+def print_result(message: str) -> None:
+    """Print an operation outcome in a consistent Result block."""
+    print("\n*********** Result ***********")
+    print(message)
+    print("******************************\n")
 
 
 def user_input_menu() -> int:
@@ -20,21 +34,24 @@ def user_input_menu() -> int:
     print("8. Save & View History")
     print("9. Export Session")
     print("10. Exit")
-    print("====================================================")
 
-    return int(input("Enter your choice: "))
+    print("\n👇👇👇👇👇👇👇👇👇👇👇👇👇👇👇👇👇👇👇")
+    return int(input("Enter your choice : "))
 
 
 def history_menu() -> None:
     """Show history management submenu."""
     while True:
-        print("\n--- Save & View History ---")
+        print("\n====================================================")
+        print("           📜 Save & View History")
+        print("====================================================")
         print("1. View History")
         print("2. Delete History by ID")
         print("3. Delete All History")
         print("4. Back to Main Menu")
 
-        choice = input("Enter your choice: ").strip()
+        print("\n👇👇👇👇👇👇👇👇👇👇👇👇👇👇👇👇👇👇👇")
+        choice = input("Enter your choice : ").strip()
 
         match choice:
             case "1":
@@ -46,7 +63,7 @@ def history_menu() -> None:
             case "4":
                 return
             case _:
-                print("Invalid choice. Please try again.")
+                print_result("Invalid choice. Please try again.")
 
 
 def prompt_multiline_input(prompt: str) -> str:
@@ -66,52 +83,122 @@ def print_query_record(
     action_type: str,
     query: str,
     created_on: str,
+    ai_response: str | None = None,
+    ai_provider: str | None = None,
+    model: str | None = None,
 ) -> None:
-    """Print a single saved query in a readable format."""
+    """Print a single saved record in a readable format."""
     label = database.get_action_label(action_type)
-    print("-" * 52)
-    print(f"ID:       {record_id}")
+    print(f"\n------------------- ID : {record_id} -------------------")
     print(f"Action:   {label}")
     print(f"Saved on: {created_on}")
     print(f"Content:\n{query}")
 
+    if ai_response:
+        print(f"\nAI Provider: {ai_provider or '-'}")
+        print(f"Model:       {model or '-'}")
+        print("AI Response:\n" + ai_response)
 
-def save_action_input(action_type: str, action_label: str, input_prompt: str) -> None:
-    """Save user input for a menu action."""
+
+def save_action_input(
+    action_type: str, action_label: str, input_prompt: str
+) -> int | None:
+    """Save user input for a menu action and return the record id (or None)."""
     print(f"\n--- {action_label} ---")
     print("Phase 1 saves your input locally. AI responses arrive in Phase 2.")
 
     content = prompt_multiline_input(input_prompt)
 
     if not content.strip():
-        print("Nothing was saved. The input was empty.")
-        return
+        print_result("Nothing was saved. The input was empty.")
+        return None
 
     if len(content) > MAX_QUERY_LENGTH:
-        print(
+        print_result(
             f"Input is too large ({len(content):,} characters). "
             f"Maximum allowed is {MAX_QUERY_LENGTH:,} characters."
         )
-        return
+        return None
 
     try:
         record_id = database.save_query(content, action_type=action_type)
     except sqlite3.Error as exc:
-        print(f"Could not save input: {exc}")
+        print_result(f"Could not save input: {exc}")
+        return None
+
+    print_result(f"Saved successfully under '{action_label}'. Record ID: {record_id}")
+    return record_id
+
+
+def _run_ai_for_record(
+    record_id: int,
+    action_type: str,
+    user_input: str,
+    prompt_func,
+) -> None:
+    """Call AI for a saved record and persist the response.
+
+    Notes:
+    - The CLI must not crash on AI failures.
+    - The user's input must already be saved.
+    """
+
+    # Resolve provider/config early for friendly error messages.
+    try:
+        cfg = load_ai_config()
+    except ValueError as exc:
+        print_result(f"AI configuration error: {exc}")
         return
 
-    print(f"Saved successfully under '{action_label}'. Record ID: {record_id}")
+    logger.info(f"AI request started. provider = {cfg.provider}")
+
+    try:
+        ai_response = prompt_func(user_input)
+        logger.info("AI response received")
+
+        # Persist AI output.
+        database.save_ai_response(
+            record_id=record_id,
+            ai_response=ai_response,
+            ai_provider=cfg.provider,
+            model=cfg.model,
+        )
+
+        print("\n--- AI Response ---")
+        print(ai_response)
+
+        # Keep AI response visible, but wrap the operation outcome consistently.
+        print_result("AI response generated and saved successfully.")
+
+    except (ValueError, sqlite3.Error) as exc:
+        # ValueError covers invalid provider/settings and empty input validation.
+        print_result(f"AI failed: {exc}")
+    except Exception as exc:  # noqa: BLE001 - keep CLI resilient
+        # Catch-all to avoid crashing the app.
+        print_result(f"AI request failed due to an unexpected error: {exc}")
 
 
 def explain_error() -> None:
-    save_action_input(
+    record_id = save_action_input(
         "explain_error",
         "Explain an Error",
         "Paste your error or stack trace (press Enter twice to finish):",
     )
+    if record_id is None:
+        return
+
+    user_input = database.get_all_queries()[0][2]  # simplest: re-read latest query
+
+    _run_ai_for_record(
+        record_id=record_id,
+        action_type="explain_error",
+        user_input=user_input,
+        prompt_func=explain_error_service,
+    )
 
 
 def explain_code() -> None:
+    # Phase 2: must keep existing Phase 1 behavior.
     save_action_input(
         "explain_code",
         "Explain Code",
@@ -136,10 +223,21 @@ def generate_unit_tests() -> None:
 
 
 def sql_assistant() -> None:
-    save_action_input(
+    record_id = save_action_input(
         "sql_assistant",
         "SQL Assistant",
         "Paste your SQL query or question (press Enter twice to finish):",
+    )
+    if record_id is None:
+        return
+
+    user_input = database.get_all_queries()[0][2]
+
+    _run_ai_for_record(
+        record_id=record_id,
+        action_type="sql_assistant",
+        user_input=user_input,
+        prompt_func=sql_assistant_service,
     )
 
 
@@ -160,64 +258,80 @@ def git_assistant() -> None:
 
 
 def view_history() -> None:
-    """Display all saved queries."""
+    """Display all saved records."""
     try:
         rows = database.get_all_queries()
     except sqlite3.Error as exc:
-        print(f"Could not load history: {exc}")
+        print_result(f"Could not load history: {exc}")
         return
 
     if not rows:
-        print("No history found.")
+        print_result("No history found.")
         return
 
-    print(f"\nShowing {len(rows)} record(s):\n")
-    for record_id, action_type, query, created_on in rows:
-        print_query_record(record_id, action_type, query, created_on)
+    print(f"\n************* Showing {len(rows)} record(s) *************")
+    for (
+        record_id,
+        action_type,
+        query,
+        created_on,
+        ai_response,
+        ai_provider,
+        model,
+    ) in rows:
+        print_query_record(
+            record_id,
+            action_type,
+            query,
+            created_on,
+            ai_response,
+            ai_provider,
+            model,
+        )
 
 
 def delete_history_by_id() -> None:
     """Delete a single history record by its ID."""
     raw_id = input("Enter the ID to delete: ").strip()
     if not raw_id.isdigit():
-        print("Invalid ID. Please enter a number.")
+        print_result("Invalid ID. Please enter a number.")
         return
 
     record_id = int(raw_id)
 
     try:
         if not database.query_exists(record_id):
-            print("No record found with that ID.")
+            print_result("No record found with that ID.")
             return
 
         deleted = database.delete_query(record_id)
     except sqlite3.Error as exc:
-        print(f"Could not delete record: {exc}")
+        print_result(f"Could not delete record: {exc}")
         return
 
     if deleted:
-        print(f"Record {record_id} deleted.")
+        print_result(f"Record {record_id} deleted.")
     else:
-        print("No record found with that ID.")
+        print_result("No record found with that ID.")
 
 
 def delete_all_history() -> None:
     """Delete all history records after user confirmation."""
-    confirm = input(
-        "Delete ALL history? This cannot be undone. (yes/no): "
-    ).strip().lower()
+    confirm = (
+        input("Delete ALL history? This cannot be undone. (yes/no): ").strip().lower()
+    )
 
     if confirm != "yes":
-        print("Delete all cancelled.")
+        print_result("Delete all cancelled.")
         return
 
     try:
         removed = database.delete_all_queries()
     except sqlite3.Error as exc:
-        print(f"Could not delete history: {exc}")
+        print_result(f"Could not delete history: {exc}")
         return
 
-    print(f"Deleted {removed} record(s).")
+    print_result(f"Deleted {removed} record(s).")
 
 
 def export_session() -> None:
@@ -225,17 +339,17 @@ def export_session() -> None:
     try:
         rows = database.get_all_queries()
     except sqlite3.Error as exc:
-        print(f"Could not load history for export: {exc}")
+        print_result(f"Could not load history for export: {exc}")
         return
 
     if not rows:
-        print("No history to export.")
+        print_result("No history to export.")
         return
 
     try:
         export_path = database.export_session()
     except (sqlite3.Error, OSError) as exc:
-        print(f"Could not export session: {exc}")
+        print_result(f"Could not export session: {exc}")
         return
 
     print(f"Exported {len(rows)} record(s) to:\n{export_path}")
@@ -246,7 +360,7 @@ def main() -> None:
     try:
         database.initialize_database()
     except sqlite3.Error as exc:
-        print(f"Could not initialize database: {exc}")
+        print_result(f"Could not initialize database: {exc}")
         return
 
     action_handlers = {
@@ -267,7 +381,7 @@ def main() -> None:
             try:
                 choice = user_input_menu()
             except ValueError:
-                print("Invalid choice. Please enter a number.")
+                print_result("Invalid choice. Please enter a number.")
                 continue
 
             if choice == 10:
@@ -276,7 +390,7 @@ def main() -> None:
 
             handler = action_handlers.get(choice)
             if handler is None:
-                print("Invalid choice. Please try again.")
+                print_result("Invalid choice. Please try again.")
                 continue
 
             handler()
