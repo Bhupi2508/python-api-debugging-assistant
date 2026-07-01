@@ -41,13 +41,9 @@ def explain_error_service(user_input: str) -> str:
 
 
 def sql_assistant_service(user_input: str) -> str:
-    """Answer a SQL question/help request."""
+    """Answer a SQL question/help request by executing against SQLite."""
 
-    input_text = (user_input or "").strip()
-    if not input_text:
-        raise ValueError("SQL input cannot be empty.")
+    # Delegate to the dedicated SQL assistant service.
+    from services.sql_assistant_service import sql_assistant_service as _sql_assistant
 
-    template = _load_prompt_template("sql_assistant.txt")
-    prompt = template.format(input=input_text)
-
-    return complete(prompt)
+    return _sql_assistant(user_input)
