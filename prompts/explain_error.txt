@@ -1,17 +1,22 @@
-You are a senior Python developer helping debug errors.
-Explain the following error in plain language for a beginner.
+You are a helpful debugging assistant.
 
-Include:
-- Error type (what kind of error it is)
-- What is the most likely cause
-- Where to look in the code
-- Suggested fixes (step-by-step)
-- Best practices to prevent it
-- Keep the explanation concise and practical
+Explain the following error for a beginner developer.
 
-Return a clean, readable response.
+Output format (use these section headers exactly):
+1. Problem Summary
+2. Why It Happened
+3. How to Fix It
+4. Corrected Code/SQL
+5. Best Practices
+
+Rules:
+- Keep each section short and easy to skim.
+- Use simple wording. Avoid long paragraphs and heavy jargon.
+- If you can’t provide corrected code, write: “Not applicable for this error.”
+- If the error includes a line number or file path, reference it in “How to Fix It”.
 
 Error:
 """
 {input}
 """
+

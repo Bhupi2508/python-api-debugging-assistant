@@ -35,8 +35,7 @@ def user_input_menu() -> int:
     print("9. Export Session")
     print("10. Exit")
 
-    print("\n👇👇👇👇👇👇👇👇👇👇👇👇👇👇👇👇👇👇👇")
-    return int(input("Enter your choice : "))
+    return int(input("\n👉 Enter your choice : "))
 
 
 def history_menu() -> None:
@@ -50,8 +49,7 @@ def history_menu() -> None:
         print("3. Delete All History")
         print("4. Back to Main Menu")
 
-        print("\n👇👇👇👇👇👇👇👇👇👇👇👇👇👇👇👇👇👇👇")
-        choice = input("Enter your choice : ").strip()
+        choice = input("\n👉 Enter your choice : ").strip()
 
         match choice:
             case "1":
@@ -104,8 +102,8 @@ def save_action_input(
     action_type: str, action_label: str, input_prompt: str
 ) -> int | None:
     """Save user input for a menu action and return the record id (or None)."""
-    print(f"\n--- {action_label} ---")
-    print("Phase 1 saves your input locally. AI responses arrive in Phase 2.")
+    print(f"\n✅ ************** {action_label} **************")
+    print("Your input will be saved to the database and analyzed by the AI assistant.")
 
     content = prompt_multiline_input(input_prompt)
 
@@ -182,7 +180,7 @@ def explain_error() -> None:
     record_id = save_action_input(
         "explain_error",
         "Explain an Error",
-        "Paste your error or stack trace (press Enter twice to finish):",
+        "📋 Paste the error message or stack trace below (press Enter twice to finish) : 👇\n",
     )
     if record_id is None:
         return
@@ -226,7 +224,7 @@ def sql_assistant() -> None:
     record_id = save_action_input(
         "sql_assistant",
         "SQL Assistant",
-        "Paste your SQL query or question (press Enter twice to finish):",
+        "Paste your SQL query or question (press Enter twice to finish) : 👇\n",
     )
     if record_id is None:
         return
